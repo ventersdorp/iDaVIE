@@ -22,7 +22,6 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
-using DataFeatures;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -33,11 +32,10 @@ namespace VolumeData
     public class VolumeCommandController : MonoBehaviour
     {
         public GameObject mainCanvassDesktop;
-
-        public VolumeInputController VolumeInputController;
         public QuickMenuController QuickMenuController;
         public PaintMenuController PaintMenuController;
         public MomentMapMenuController momentMapMenuController;
+        public FeatureMenuController featureMenuController;
         
         public bool IsVoiceRecognitionActive => _speechKeywordRecognizer.IsRunning;
 
@@ -92,20 +90,28 @@ namespace VolumeData
             public static readonly string Undo = "undo";
             public static readonly string Redo = "redo";
             public static readonly string SaveSubCube = "export sub cube";
+            public static readonly string NextSourceList = "next source list";
+            public static readonly string PreviousSourceList = "previous source list";
+            public static readonly string ExportVideoScript = "export video script";
+            public static readonly string EnterVideoMode = "video mode";
+            public static readonly string RecordVideoPosition = "record position";
 
             public static readonly string[] All =
             {
-                EditThresholdMin, EditThresholdMax, EditZAxis, EditZAxisAlt, SaveThreshold, ResetThreshold, ResetTransform, ColormapPlasma, ColormapRainbow, 
+                EditThresholdMin, EditThresholdMax, EditZAxis, EditZAxisAlt, SaveThreshold, ResetThreshold, ResetTransform, ColormapPlasma, ColormapRainbow,
                 ColormapMagma, ColormapInferno, ColormapViridis, ColormapCubeHelix, ColormapTurbo, ResetZAxis, ResetZAxisAlt, SaveZAxis, SaveZAxisAlt,
-                CropSelection, Teleport, ResetCropSelection, MaskDisabled, MaskEnabled, MaskInverted, MaskIsolated, ProjectionMaximum, 
-                ProjectionAverage, SamplingModeAverage, SamplingModeMaximum, PaintMode, ExitPaintMode, BrushAdd, BrushErase, ShowMaskOutline, 
+                CropSelection, Teleport, ResetCropSelection, MaskDisabled, MaskEnabled, MaskInverted, MaskIsolated, ProjectionMaximum,
+                ProjectionAverage, SamplingModeAverage, SamplingModeMaximum, PaintMode, ExitPaintMode, BrushAdd, BrushErase, ShowMaskOutline,
                 HideMaskOutline, TakePicture, CursorInfo, LinearScale,
-                LogScale, SqrtScale, AddNewSource, SetSourceId, Undo, Redo, SaveSubCube
+                LogScale, SqrtScale, AddNewSource, SetSourceId, Undo, Redo, SaveSubCube,
+                NextSourceList, PreviousSourceList,
+                ExportVideoScript, EnterVideoMode, RecordVideoPosition
             };
         }
-   
+
         private KeywordRecognizer _speechKeywordRecognizer;
         private VolumeInputController _volumeInputController;
+        private VideoRecordMenuController _videoRecordMenuController;
 
         private VolumeDataSetRenderer _activeDataSet;
 
@@ -119,6 +125,7 @@ namespace VolumeData
             _speechKeywordRecognizer = new KeywordRecognizer(Keywords.All, _config.voiceCommandConfidenceLevel);
             _speechKeywordRecognizer.OnPhraseRecognized += OnPhraseRecognized;
             _volumeInputController = FindObjectOfType<VolumeInputController>();
+            _videoRecordMenuController = FindObjectOfType<VideoRecordMenuController>(true);
 
             if (!_config.usePushToTalk)
             {
@@ -171,7 +178,7 @@ namespace VolumeData
         }
 
         private void ExecuteVoiceCommand(string args)
-        { 
+        {
             if (args == Keywords.EditThresholdMin)
             {
                 startThresholdEditing(false);
@@ -344,6 +351,26 @@ namespace VolumeData
             {
                 SaveSubCube();
             }
+            else if (args == Keywords.PreviousSourceList)
+            {
+                PreviousSourceList();
+            }
+            else if (args == Keywords.NextSourceList)
+            {
+                NextSourceList();
+            }
+            else if (args == Keywords.EnterVideoMode)
+            {
+                QuickMenuController.OpenVideoRecordingMenu();
+            }
+            else if (args == Keywords.RecordVideoPosition)
+            {
+                _volumeInputController.AddNewLocation(_volumeInputController.PrimaryHand);
+            }
+            else if (args == Keywords.ExportVideoScript)
+            {
+                _videoRecordMenuController.ExportToFile();
+            }
         }
 
         // Update is called once per frame
@@ -354,6 +381,22 @@ namespace VolumeData
             {
                 _activeDataSet = firstActive;
             }
+        }
+
+        /// <summary>
+        /// Function forwarding to featureMenuController, to display the next source list.
+        /// </summary>
+        void NextSourceList()
+        {
+            featureMenuController.DisplayNextSet();
+        }
+
+        /// <summary>
+        /// Function forwarding to featureMenuController, to display the previous source list.
+        /// </summary>
+        void PreviousSourceList()
+        {
+            featureMenuController.DisplayPreviousSet();
         }
 
         public void AddDataSet(VolumeDataSetRenderer setToAdd)
@@ -533,12 +576,12 @@ namespace VolumeData
 
         public void SetBrushAdditive()
         {
-            VolumeInputController.SetBrushAdditive();
+            _volumeInputController.SetBrushAdditive();
         }
 
         public void SetBrushSubtractive()
         {
-            VolumeInputController.SetBrushSubtractive();
+            _volumeInputController.SetBrushSubtractive();
         }
 
         public void ShowMaskOutline()

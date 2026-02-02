@@ -14,11 +14,12 @@ TagManager:
   - ScrollView
   - keypad
   - ToastNotification
+  - CanvasDesktop
   layers:
   - Default
   - TransparentFX
   - Ignore Raycast
-  - 
+  - Cube
   - Water
   - UI
   - 

@@ -21,18 +21,16 @@
  */
 using System;
 using System.Collections.Generic;
-using Stateless;
-using VolumeData;
-using TMPro;
-using UnityEngine;
-using UnityEngine.XR;
-using Valve.VR;
-using Valve.VR.InteractionSystem;
 using System.Diagnostics;
 using System.Linq;
 using DataFeatures;
 using LineRenderer;
-using UnityEngine.Serialization;
+using Stateless;
+using TMPro;
+using UnityEngine;
+using Valve.VR;
+using Valve.VR.InteractionSystem;
+using VolumeData;
 using Debug = UnityEngine.Debug;
 using VRHand = Valve.VR.InteractionSystem.Hand;
 
@@ -56,7 +54,7 @@ public class VolumeInputController : MonoBehaviour
         EditingThresholdMax,
         EditingZAxis
     }
-    
+
     public enum InteractionState
     {
         IdleSelecting,
@@ -64,7 +62,8 @@ public class VolumeInputController : MonoBehaviour
         EditingSourceId,
         Creating,
         Editing,
-        Painting
+        Painting,
+        VideoCamPosRecording
     }
 
     public enum InteractionEvents
@@ -75,7 +74,9 @@ public class VolumeInputController : MonoBehaviour
         PaintModeDisabled,
         StartEditSource,
         EndEditSource,
-        CancelEditSource
+        CancelEditSource,
+        StartVideoRecording,
+        EndVideoRecording
     }
 
     [Flags]
@@ -129,6 +130,8 @@ public class VolumeInputController : MonoBehaviour
 
     public event Action PushToTalkButtonPressed;
     public event Action PushToTalkButtonReleased;
+
+    public VideoPosRecorder _videoPosRecorder { get;  set; } = null;
     
     
     // Interactions
@@ -176,6 +179,12 @@ public class VolumeInputController : MonoBehaviour
     private bool _savePopupOn = false;
     private bool _exportPopupOn = false;
     private bool _shapeSelection = false;
+
+    /// <summary>
+    /// Timer for video position recording mode to ensure that the buttons don't register multiple presses.
+    /// </summary>
+    float _deltaT = 0.0f;
+    float _resetTime = 0.5f;
 
     [SerializeField]
     public GameObject toastNotificationPrefab = null;
@@ -302,6 +311,7 @@ public class VolumeInputController : MonoBehaviour
         InteractionStateMachine.Configure(InteractionState.IdleSelecting)
             .OnEntryFrom(InteractionEvents.PaintModeDisabled, ExitPaintMode)
             .Permit(InteractionEvents.PaintModeEnabled, InteractionState.IdlePainting)
+            .Permit(InteractionEvents.StartVideoRecording, InteractionState.VideoCamPosRecording)
             .PermitIf(InteractionEvents.InteractionStarted, InteractionState.Creating, () => !HasHoverAnchor)
             .PermitIf(InteractionEvents.InteractionStarted, InteractionState.Editing, () => HasHoverAnchor);
 
@@ -331,6 +341,11 @@ public class VolumeInputController : MonoBehaviour
             .OnEntry(StartRegionEditing)
             .OnExit(EndRegionEditing)
             .Permit(InteractionEvents.InteractionEnded, InteractionState.IdleSelecting);
+
+        InteractionStateMachine.Configure(InteractionState.VideoCamPosRecording)
+            .OnEntry(StartVideoCamPosRecording)
+            .OnExit(EndVideoCamPosRecording)
+            .Permit(InteractionEvents.EndVideoRecording, InteractionState.IdleSelecting);
     }
 
     private void OnDisable()
@@ -353,7 +368,7 @@ public class VolumeInputController : MonoBehaviour
             SteamVR_Input.GetAction<SteamVR_Action_Boolean>("MenuLeft")?.RemoveOnStateDownListener(OnMenuLeftPressed, SteamVR_Input_Sources.RightHand);
             SteamVR_Input.GetAction<SteamVR_Action_Boolean>("MenuRight")?.RemoveOnStateDownListener(OnMenuRightPressed, SteamVR_Input_Sources.LeftHand);
             SteamVR_Input.GetAction<SteamVR_Action_Boolean>("MenuRight")?.RemoveOnStateDownListener(OnMenuRightPressed, SteamVR_Input_Sources.RightHand);
-             SteamVR_Input.GetAction<SteamVR_Action_Boolean>("InteractUI")?.RemoveOnChangeListener(OnTriggerChanged, SteamVR_Input_Sources.LeftHand);
+            SteamVR_Input.GetAction<SteamVR_Action_Boolean>("InteractUI")?.RemoveOnChangeListener(OnTriggerChanged, SteamVR_Input_Sources.LeftHand);
             SteamVR_Input.GetAction<SteamVR_Action_Boolean>("InteractUI")?.RemoveOnChangeListener(OnTriggerChanged, SteamVR_Input_Sources.RightHand);
         }
     }
@@ -362,7 +377,7 @@ public class VolumeInputController : MonoBehaviour
     {
         if (_locomotionState == LocomotionState.EditingThresholdMax || 
             _locomotionState == LocomotionState.EditingThresholdMin ||
-             _locomotionState == LocomotionState.EditingZAxis)
+            _locomotionState == LocomotionState.EditingZAxis)
         {
             EndEditing();
         }
@@ -394,14 +409,14 @@ public class VolumeInputController : MonoBehaviour
 
     private void OnMenuUpReleased(SteamVR_Action_Boolean fromAction, SteamVR_Input_Sources fromSource)
     {
-         if (fromSource == PrimaryHand && scrollSelected)
-         {
+        if (fromSource == PrimaryHand && scrollSelected)
+        {
             scrollUp = false;
-         }
-         else if(fromSource == PrimaryHand && _shapeSelection) {
+        }
+        else if(fromSource == PrimaryHand && _shapeSelection) {
             scalingUp = false;
             scalingTimer = 0f;
-         }
+        }
     }
 
     private void OnMenuDownPressed(SteamVR_Action_Boolean fromAction, SteamVR_Input_Sources fromSource)
@@ -531,12 +546,7 @@ public class VolumeInputController : MonoBehaviour
             return;
         }
 
-        _paintMenuOn = CanvassQuickMenu.GetComponent<QuickMenuController>().paintMenu.activeSelf;
-        _shapeMenuOn = CanvassPaintMenu.GetComponent<PaintMenuController>().shapeMenu.activeSelf;
-        _savePopupOn = CanvassQuickMenu.GetComponent<QuickMenuController>().savePopup.activeSelf;
-        _exportPopupOn = CanvassQuickMenu.GetComponent<QuickMenuController>().exportPopup.activeSelf;
-
-        if (newState && !_paintMenuOn && !_shapeMenuOn && !_savePopupOn && !_exportPopupOn)
+        if (newState && InteractionStateMachine.State == InteractionState.IdleSelecting)
         {
             StartRequestQuickMenu(fromSource == SteamVR_Input_Sources.LeftHand ? 0 : 1);
         }
@@ -578,7 +588,6 @@ public class VolumeInputController : MonoBehaviour
         }
     }
 
-
     private void OnPinchChanged(SteamVR_Action_Boolean fromAction, SteamVR_Input_Sources fromSource, bool newState)
     {
         // Skip input from secondary hand
@@ -586,22 +595,41 @@ public class VolumeInputController : MonoBehaviour
         {
             return;
         }
+
+        // Skip input if in source ID editing mode (only trigger is accepted then)
+        if (newState && InteractionStateMachine.State == InteractionState.EditingSourceId)
+        {
+            Debug.Log("Pinch button does nothing in this state.");
+            return;
+        }
         
-        if(_shapeSelection) {
-            if(newState)
+        if (_shapeSelection)
+        {
+            if (newState)
             {
-                if(shapesManager.isShapeSelected()) PlaceShape();
+                if (shapesManager.isShapeSelected()) PlaceShape();
                 shapesManager.SelectShape();
             }
             return;
         }
 
-        if (newState && InteractionStateMachine.State == InteractionState.EditingSourceId)
+        if (InteractionStateMachine.State == InteractionState.VideoCamPosRecording)
         {
-            Debug.Log("Pinch Started");
+            // If timer has not yet reached reset, don't activate any buttons.
+            if (_deltaT > _resetTime)
+            {
+                // Else, reset timer and activate buttons where appropriate
+                _deltaT = 0.00000f;
+                // If pressing down on button, add location
+                if (newState)
+                    AddNewLocation(fromSource);
+                // else if letting go, do nothing.
+            }
         }
-
-        InteractionStateMachine.Fire(newState ? InteractionEvents.InteractionStarted : InteractionEvents.InteractionEnded);
+        else
+        {
+            InteractionStateMachine.Fire(newState ? InteractionEvents.InteractionStarted : InteractionEvents.InteractionEnded);
+        }
     }
 
     private void StateTransitionMovingToIdle()
@@ -812,6 +840,11 @@ public class VolumeInputController : MonoBehaviour
             }
         }
 
+        if (InteractionStateMachine.State == InteractionState.VideoCamPosRecording)
+        {
+            // Add previous frame time to timer
+            _deltaT += Time.smoothDeltaTime;
+        }
         ToastNotification.Update();
     }
 
@@ -1068,7 +1101,7 @@ public class VolumeInputController : MonoBehaviour
         // Edit the region bounds in Editing state, but not for mask feature sets
         else if (currentState == InteractionState.Editing && HasEditingAnchor && _editingFeature.FeatureSetParent.FeatureSetType != FeatureSetType.Mask)
         {
-            var voxelPosition = dataSet.GetVoxelPosition(cursorPosWorldSpace);
+            var voxelPosition = dataSet.GetVoxelPositionWorldSpace(cursorPosWorldSpace);
             var newCornerMin = _editingFeature.CornerMin;
             var newCornerMax = _editingFeature.CornerMax;
 
@@ -1163,20 +1196,20 @@ public class VolumeInputController : MonoBehaviour
             dataSet.GetFitsLengthsAst(regionMin, regionMax + Vector3.one, out xLength, out yLength, out zLength, out angle);
             string depthUnit = dataSet.GetAxisUnit(3);
             stringToReturn += $"Angle: {FormatAngle(angle)}{Environment.NewLine}"
-                              + $"Depth: {dataSet.GetFormattedCoord(Math.Abs(zLength), 3),15} {dataSet.GetAstAttribute("Unit(3)")}";
+                            + $"Depth: {dataSet.GetFormattedCoord(Math.Abs(zLength), 3),15} {dataSet.GetAstAttribute("Unit(3)")}";
         }
 
         return stringToReturn;
     }
 
     /// <summary>
-    /// Checks if the cursor is outside the volume cube
+    /// Checks if the cursor is outside the volume cube.
     /// </summary>
-    /// <param name="dataSetRenderer"></param>
-    /// <returns></returns>
+    /// <param name="dataSetRenderer">The renderer that determines the volume cube bounds.</param>
+    /// <returns>True if the cursor is outside the cube, false otherwise.</returns>
     public static bool IsCursorOutsideCube(VolumeDataSetRenderer dataSetRenderer)
     {
-        return (dataSetRenderer.CursorVoxel.x < 0 || dataSetRenderer.CursorVoxel.y < 0 || dataSetRenderer.CursorVoxel.z < 0 || dataSetRenderer.CursorVoxel.x >= dataSetRenderer.Data.XDim || dataSetRenderer.CursorVoxel.y >= dataSetRenderer.Data.YDim || dataSetRenderer.CursorVoxel.z >= dataSetRenderer.Data.ZDim);
+        return (dataSetRenderer.CursorVoxel.x < 1 || dataSetRenderer.CursorVoxel.y < 1 || dataSetRenderer.CursorVoxel.z < 1 || dataSetRenderer.CursorVoxel.x > dataSetRenderer.Data.XDim || dataSetRenderer.CursorVoxel.y > dataSetRenderer.Data.YDim || dataSetRenderer.CursorVoxel.z > dataSetRenderer.Data.ZDim);
     }
     
     /// <summary>
@@ -1206,14 +1239,22 @@ public class VolumeInputController : MonoBehaviour
         {
             double physX, physY, physZ, normX, normY;
             double normZ = 0;
-            dataSet.GetFitsCoordsAst(voxelCoordinate.x, voxelCoordinate.y, voxelCoordinate.z, out physX, out physY, out physZ);
+            var dataCoordinate = dataSetRenderer.GetVoxelPositionDataSpace();
+            dataSet.GetFitsCoordsAst(dataCoordinate.x, dataCoordinate.y, dataCoordinate.z, out physX, out physY, out physZ);
             dataSet.GetNormCoords(physX, physY, physZ, out normX, out normY, out normZ);
             stringToReturn += $"WCS: ({dataSet.GetFormattedCoord(normX, 1)}, {dataSet.GetFormattedCoord(normY, 2)}){Environment.NewLine}"
-                              + $"{dataSet.GetAstAttribute("System(3)")}: {dataSet.GetFormattedCoord(normZ, 3),10} {dataSet.GetAstAttribute("Unit(3)")}{Environment.NewLine}";
+                            + $"{dataSet.GetAstAttribute("System(3)")}: {dataSet.GetFormattedCoord(normZ, 3),10} {dataSet.GetAstAttribute("Unit(3)")}{Environment.NewLine}";
         }
+
+        stringToReturn += $"World: ({voxelCoordinate.x,5}, {voxelCoordinate.y,5}, {voxelCoordinate.z,5}){Environment.NewLine}";
         
-        stringToReturn += $"Image: ({voxelCoordinate.x,5}, {voxelCoordinate.y,5}, {voxelCoordinate.z,5}){Environment.NewLine}"
-                        + $"Value: {dataSetRenderer.CursorValue,16} {dataSet.GetPixelUnit()}";
+        if (dataSet.isSubset())
+        {
+            Vector3Int dataVoxel = dataSetRenderer.GetVoxelPositionDataSpace();
+            stringToReturn += $"Data: ({dataVoxel.x,5}, {dataVoxel.y,5}, {dataVoxel.z,5}){Environment.NewLine}";
+        }
+
+        stringToReturn += $"Value: {dataSetRenderer.CursorValue,16} {dataSet.GetPixelUnit()}";
 
         if (dataSet.HasRestFrequency)
             stringToReturn += $"{Environment.NewLine}{dataSet.GetConvertedDepth(voxelCoordinate.z)}";
@@ -1264,6 +1305,11 @@ public class VolumeInputController : MonoBehaviour
         return VRFamily.Unknown;
     }
 
+    /// <summary>
+    /// Teleports the cube to place a given bounds directly in the user's view.
+    /// </summary>
+    /// <param name="boundsMin">Lower front left corner of the bounds.</param>
+    /// <param name="boundsMax">Top rear right corner of the bounds.</param>
     public void Teleport(Vector3 boundsMin, Vector3 boundsMax)
     {
         float targetSize = 0.3f;
@@ -1288,6 +1334,24 @@ public class VolumeInputController : MonoBehaviour
             Vector3 centerWorldSpace = dataSetTransform.TransformPoint((boundsMaxObjectSpace + boundsMinObjectSpace) / 2.0f);
             Vector3 deltaPosition = targetPosition - centerWorldSpace;
             dataSetTransform.position += deltaPosition;
+        }
+    }
+
+    /// <summary>
+    /// Teleports the data cube to be in the same position as it was, relative to the camera, when the user saved the location. Used by the list of video positions.
+    /// </summary>
+    /// <param name="pos">The position of the camera relative to the cube when saved.</param>
+    /// <param name="rotEulerAngles">The rotation of the camera relative to the cube when saved.</param>
+    public void TeleportToVidRecLoc(Vector3 pos, Vector3 rotEulerAngles)
+    {
+        var activeDataSet = ActiveDataSet;
+        if (activeDataSet != null && Camera.main != null)
+        {
+            var dataSetTransform = activeDataSet.transform;
+            var cameraTransform = Camera.main.transform;
+
+            dataSetTransform.rotation = cameraTransform.rotation * Quaternion.Inverse(Quaternion.Euler(rotEulerAngles));
+            dataSetTransform.position = cameraTransform.position - dataSetTransform.TransformVector(pos);
         }
     }
 
@@ -1361,6 +1425,36 @@ public class VolumeInputController : MonoBehaviour
         ShowCursorInfo = !ShowCursorInfo;
     }
 
+    /// <summary>
+    /// A function to add a new location to _videoPosRecorder's list, which can be either the user pressing a button, or by voice command.
+    /// </summary>
+    /// <param name="fromSource">The hand that triggered this command – will always be PrimaryHand</param>
+    public void AddNewLocation(SteamVR_Input_Sources fromSource)
+    {
+        VideoPosRecorder.videoLocRecMode mode = _videoPosRecorder.GetRecordingMode();
+        switch (mode)
+        {
+            case VideoPosRecorder.videoLocRecMode.CURSOR:
+                Vector3 cursorPos = ActiveDataSet.ConvertWorldPositionToDataCubePosition(_handTransforms[PrimaryHandIndex].position);
+                Vector3 cursorRot = Vector3.zero;
+                _videoPosRecorder.addLocation(cursorPos, cursorRot, mode);
+                Debug.Log($"Recording new cursor location at {{{cursorPos}, {cursorRot}}}");
+                VibrateController(fromSource, 0.1f);
+                break;
+            case VideoPosRecorder.videoLocRecMode.HEAD:
+                Vector3 headPos = ActiveDataSet.ConvertWorldPositionToDataCubePosition(Camera.main.transform.position);
+
+                Vector3 headRot = ActiveDataSet.ConvertWorldRotationToDatacubeRotation(Camera.main.transform.rotation).eulerAngles;
+                _videoPosRecorder.addLocation(headPos, headRot, mode);
+                Debug.Log($"Recording new head location at {{{headPos}, {headRot}}}");
+                VibrateController(fromSource, 0.1f);
+                break;
+            default:
+                Debug.LogError("Invalid video recording mode: how did you manage this?");
+                break;
+        }
+    }
+
     public void AddNewSource()
     {
         AdditiveBrush = true;
@@ -1373,13 +1467,33 @@ public class VolumeInputController : MonoBehaviour
             InteractionStateMachine.Fire(InteractionEvents.CancelEditSource);
         }
     }
+
+    /// <summary>
+    /// Function called when trying to change source ID, used to control state machine when interacting with paint mode.
+    /// </summary>
+    public void StartEditSourceID()
+    {
+        if (InteractionStateMachine.State == InteractionState.IdlePainting)
+        {
+            Debug.Log("Starting source ID editing mode");
+            InteractionStateMachine.Fire(InteractionEvents.StartEditSource);
+        }
+        else if (InteractionStateMachine.State == InteractionState.EditingSourceId)
+        {
+            Debug.Log("Already in source ID editing mode.");
+        }
+        else
+        {
+            Debug.Log($"Attempted to enter source ID editing mode from incorrect state!");
+        }
+    }
     
     public void SetBrushAdditive()
     {
         AdditiveBrush = true;
         if (SourceId <= 0)
         {
-            InteractionStateMachine.Fire(InteractionEvents.StartEditSource);    
+            InteractionStateMachine.Fire(InteractionEvents.StartEditSource);
         }
     }
 
@@ -1410,7 +1524,7 @@ public class VolumeInputController : MonoBehaviour
     }
 
     private void OnTriggerChanged(SteamVR_Action_Boolean fromAction, SteamVR_Input_Sources fromSource, bool newState) {
-         if(_shapeSelection) {
+        if(_shapeSelection) {
             GameObject moveableShape = shapesManager.GetMoveableShape();
             if(moveableShape != null) {
                 if(newState) {
@@ -1423,7 +1537,6 @@ public class VolumeInputController : MonoBehaviour
             }
         }
     }
-
 
     public void ChangeShapeSelection() {
         _shapeSelection = !_shapeSelection;
@@ -1443,14 +1556,31 @@ public class VolumeInputController : MonoBehaviour
         shapesManager.SetSelectableShape(shape);
     }
 
+    /// <summary>
+    /// Function that is called when the user enters the video recording mode. Initialises the button press timer.
+    /// </summary>
+    public void StartVideoCamPosRecording()
+    {
+        _deltaT = 0.0f;
+        Debug.Log("Entering video position recording mode.");
+    }
+
+    /// <summary>
+    /// Function that is called when the user exits the video recording mode. Merely logs for the moment.
+    /// </summary>
+    public void EndVideoCamPosRecording()
+    {
+        Debug.Log("Exiting video position recording mode.");
+    }
+
     //Places the selected shape into the scene
     public void PlaceShape() {
         GameObject shape = shapesManager.GetCurrentShape();
         GameObject selectedShape = shapesManager.GetSelectedShape();
-        if(selectedShape == null) return;
-        GameObject shapeCopy = Instantiate(shape,selectedShape.transform.position,selectedShape.transform.rotation);
+        if (selectedShape == null) return;
+        GameObject shapeCopy = Instantiate(shape, selectedShape.transform.position, selectedShape.transform.rotation);
         shapeCopy.name = shapesManager.GetShapeName(shapeCopy);
-        if(shapeCopy.name.Contains("Cylinder")) {
+        if (shapeCopy.name.Contains("Cylinder")) {
             var collider = shapeCopy.GetComponent<CapsuleCollider>();
             collider.enabled = true;
         }
