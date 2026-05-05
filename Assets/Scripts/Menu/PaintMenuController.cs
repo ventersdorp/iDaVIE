@@ -52,17 +52,23 @@ public class PaintMenuController : MonoBehaviour
 
     void OnEnable()
     {
-        if (volumeDatasetRendererObj != null)
-            _dataSets = volumeDatasetRendererObj.GetComponentsInChildren<VolumeDataSetRenderer>(true);
-
-        if (_volumeInputController == null)
-            _volumeInputController = FindObjectOfType<VolumeInputController>();
+        _dataSets = volumeDatasetRendererObj?.GetComponentsInChildren<VolumeDataSetRenderer>(true);
+        _volumeInputController = FindObjectOfType<VolumeInputController>();
         
-        _volumeInputController.InteractionStateMachine.Fire(VolumeInputController.InteractionEvents.PaintModeEnabled);
+        if (_volumeInputController?.InteractionStateMachine is { } interactionStateMachine)
+        {
+            interactionStateMachine.Fire(VolumeInputController.InteractionEvents.PaintModeEnabled);
+        }
+        else
+        {
+            Debug.LogWarning("PaintMenuController: VolumeInputController or its InteractionStateMachine is null on enable.");
+        }
 
-        _topPanelText = gameObject.transform.Find("TopPanel").gameObject.transform.Find("Text").GetComponent<Text>();
+        var topTextTransform = gameObject.transform.Find("TopPanel")?.Find("Text");
+        _topPanelText = topTextTransform?.GetComponent<Text>();
         _exitButton = gameObject.transform.Find("Content/SecondRow/ExitButton")?.GetComponent<Button>();
-        _shapeSelectionButton = gameObject.transform.Find("Content/SecondRow/ShapeMenu").gameObject;
+        var shapeTransform = gameObject.transform.Find("Content/SecondRow/ShapeMenu");
+        _shapeSelectionButton = shapeTransform?.gameObject;
     }
 
     // Update is called once per frame
@@ -81,14 +87,14 @@ public class PaintMenuController : MonoBehaviour
         else if (_volumeInputController.SourceId <= 0)
         {
             _topPanelText.text = "Please select a Source ID to paint";
-            _shapeSelectionButton.GetComponent<Button>().enabled = false;
-            _shapeSelectionButton.GetComponent<Image>().color = Color.gray;
+            // _shapeSelectionButton.GetComponent<Button>().enabled = false;
+            // _shapeSelectionButton.GetComponent<Image>().color = Color.gray;
         }
         else
         {
-            _topPanelText.text = $"Paint Mode (Source ID {_volumeInputController.SourceId})";
-            _shapeSelectionButton.GetComponent<Button>().enabled = true;
-            _shapeSelectionButton.GetComponent<Image>().color = Color.white;
+            _topPanelText.text = $"Paint Mode (Source ID {_volumeInputController?.SourceId})";
+            // _shapeSelectionButton.GetComponent<Button>().enabled = true;
+            // _shapeSelectionButton.GetComponent<Image>().color = Color.white;
         }
 
     }
